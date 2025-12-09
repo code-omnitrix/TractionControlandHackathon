@@ -1,0 +1,203 @@
+ECO-GEAR CHALLENGE: TECHNICAL SPECIFICATION
+1. CHALLENGE OVERVIEW
+1.1 Introduction
+The Eco-Gear Challenge is a computational optimization hackathon. Participants must develop an intelligent, real-time gear-shifting algorithm for a simulated bicycle. The system must navigate varied terrain while balancing progress against strict physical limitations.
+1.2 Core Objective
+Design a controller that minimizes total energy consumption while navigating a track.
+Energy Cost: Energy is consumed only when applying torque (gear ratio $> 0$).
+Coasting: Gear ratio $0$ consumes zero energy and is a critical strategy component.
+Balance: You must finish within a time limit and avoid losing traction (slipping).
+
+2. CONTROLLER INTERFACE (API)
+This is the entry point for your code. Your solution must implement the following function signature.
+2.1 Function Signature
+Python
+def get_gear_ratio(x: float, v: float, slope: float, mu: float, track_info: dict) -> float:
+    """
+    Calculate optimal gear ratio based on current state and terrain information.
+    
+    Args:
+        x: Current position along track (meters)
+        v: Current velocity (m/s)
+        slope: Current terrain gradient as fraction (e.g., 0.3 = 30% grade)
+        mu: Current surface friction coefficient
+        track_info: Metadata about the full track (see 2.2)
+    
+    Returns:
+        gear_ratio: Float value in range [0.0, 5.0]
+    """
+
+2.2 Input Parameters
+x (Position): Distance from start (0 to track length).
+v (Velocity): Current speed in m/s.
+slope (Gradient): Positive = Uphill, Negative = Downhill.
+mu (Friction): Surface friction coefficient (𝝻). Range: 0.3 (Ice) to 0.8 (Dry Asphalt).
+2.3 Track Information Dictionary
+The track_info dictionary allows for forward planning and lookahead.
+Python
+track_info = {
+    'segments': [
+        (start_pos1, end_pos1, slope1, mu1),
+        (start_pos2, end_pos2, slope2, mu2),
+        ...
+    ],
+    'next_segment': (start_pos, end_pos, slope, mu) | None,
+    'finish_line': total_track_length
+}
+
+
+3. PHYSICS MODEL
+Understanding the underlying physics engine is crucial for avoiding penalties and optimizing energy.
+
+
+3.1 Force Model
+The simulator uses a dynamic wheel model based on rotational dynamics.
+
+Variables & Notation:
+I: Moment of Inertia of the wheel (0.3 kg m^2).
+α (alpha): Angular acceleration.
+τ (tau): Engine torque applied to the wheel axle.
+Fx: Longitudinal force (friction/traction) between the tire and the road.
+R: Radius of the wheel (0.35 m).
+SR: Slip Ratio (measure of tire slip).
+
+Rear Wheel (Driven):
+Equation: $I\alpha = \tau - F_{x,rear} \cdot R$
+Physics: Torque ($\tau$) accelerates spin. Road friction ($F_{x,rear}$) resists spin and pushes bike forward.
+Tire Model: $F_{x,rear} = f(SR)$ (Non-linear Magic Formula).
+
+Front Wheel (Free-Rolling):
+Equation: $I\alpha = F_{x,front} \cdot R$
+Physics: Road friction ($F_{x,front}$) spins up the wheel, creating a drag force on the bike.
+
+Vehicle Body Dynamics:
+$$F_{net} = F_{x,rear} - F_{x,front} + F_{gravity} + F_{roll} + F_{drag}$$
+
+Component Formulas:
+Gravity: $F_{gravity} = -m \cdot g \cdot \sin(\arctan(\text{slope}))$
+Rolling Res: $F_{roll} = -C_{rr} \cdot m \cdot g \cdot \cos(\arctan(\text{slope})) \cdot \text{sign}(v)$
+Air Drag: $F_{drag} = -0.5 \cdot \rho \cdot C_d A \cdot v^2 \cdot \text{sign}(v)$
+
+3.2 Constants
+Input Torque ($T_{input}$): 100 Nm (Fixed)
+Wheel Radius ($R$): 0.35 m
+Total Mass ($m$): 70 kg
+Gravity ($g$): 9.81 m/s²
+3.3 Energy Consumption
+Total Energy is the primary scoring metric.
+$$\Delta E = (T_{input} \cdot G \cdot \omega) \cdot dt$$
+Energy is only consumed when Gear Ratio ($G$) > 0.
+Coasting ($G=0$) consumes 0 Energy.
+
+4. CRITICAL CONSTRAINTS & RULES
+Violating these constraints results in Immediate Disqualification.
+4.1 The Slip Constraint (Traction)
+You must maintain traction.
+Slip Condition: Slip occurs if the absolute Slip Ratio ($|SR|$) exceeds 0.15 (15%).
+SR Calculation: $SR = (\omega \cdot R - v) / v$
+Allowance: Unlimited (Slip is natural, but excessive slip wastes energy).
+4.2 The Time Constraint
+You must complete the track within the specific limit.
+Practice Track Limit: 35 seconds.
+Test Track Limit: 150% of the theoretical minimum time (calculated by solver).
+4.3 Gear Ratio Constraints
+Valid Range: $[0.0, 5.0]$
+Values outside this range are clamped to the nearest boundary.
+Negative values become $0.0$ (Coasting).
+
+5. TRACK & TERRAIN SPECIFICATIONS
+5.1 Terrain Types
+The track is composed of segments with varying characteristics.
+Terrain Type
+Slope Range
+Typical μ
+Strategic Consideration
+Flat
+-0.05 to 0.05
+0.7 - 0.8
+Mid/High gears ($1.0-2.0$). Maintain momentum.
+Gentle Uphill
+0.05 to 0.2
+0.6 - 0.8
+Medium gears. Prevent stalling.
+Steep Uphill
+$> 0.2$
+0.5 - 0.8
+Low gears ($3.0-5.0$). High slip risk.
+Gentle Downhill
+-0.15 to -0.05
+0.4 - 0.8
+Ideal for Coasting.
+Steep Downhill
+$< -0.15$
+0.3 - 0.8
+Coast. Brake if velocity is unsafe.
+Ice / Low Friction
+Any
+$< 0.5$
+Conservative gearing. Minimize torque application.
+
+5.2 Track Formats
+Practice Track: 150m, 3 segments (Provided in starter kit).
+Test Track: 200m+, 5+ complex segments (Released 24h before evaluation).
+Note: Do not hardcode track logic. Your controller must handle the unseen Test Track dynamically.
+
+6. STRATEGY GUIDE & ALGORITHMIC CHALLENGES
+To win, your algorithm must solve several sub-problems simultaneously.
+6.1 Traction Preservation System
+You must calculate the maximum safe gear ratio dynamically.
+Python
+# Theoretical limit calculation
+F_max = mu * m * g * math.cos(math.atan(slope))
+gear_max = (F_max * R) / T_input
+# Apply a safety margin (e.g., 90%)
+safe_gear = min(desired_gear, gear_max * 0.90)
+
+6.2 Terrain Anticipation (Lookahead)
+Use track_info['next_segment'] to prepare for upcoming changes.
+Pre-Climb: Increase velocity before a steep hill to carry momentum.
+Pre-Ice: Reduce torque before hitting a low-$\mu$ patch.
+6.3 Energy Optimization
+Strategic Coasting: Identify downhill/flat sections where momentum is sufficient without input.
+Velocity Targeting: Go slower on uphills (less drag/power) and faster on flats.
+Pulse-and-Glide: On flat ground, short bursts of power followed by coasting are often more efficient than constant low power.
+
+7. EVALUATION PROTOCOL
+7.1 Qualification (Pass/Fail)
+To qualify for ranking, a submission must:
+Complete the track within the Time Limit.
+Incur $\le 5$ total Slip Events.
+Execute without runtime errors or crashes.
+7.2 Scoring (Ranking)
+Qualified submissions are ranked solely by Total Energy Consumption (Joules).
+Procedure: 10 runs on the hidden Test Track (varied random seeds).
+Score: Average energy consumption across successful runs.
+Penalty: Failed runs receive a 1,000,000 J penalty.
+7.3 Tiebreakers
+Lower average slip count.
+Lower average completion time.
+Lower variance in energy consumption.
+
+8. DEVELOPMENT & SUBMISSION
+8.1 Simulator Capabilities
+Visualization: Real-time track profile and friction coloring.
+Dashboard: Shows Energy, Time, and Slip Counter.
+Logging: Generates CSVs with timestamp, position, forces, and energy stats for debugging.
+8.2 Submission Guidelines
+File: Submit only controller.py.
+Format: Must contain the get_gear_ratio function.
+Dependencies: Standard Python library only. No external files.
+Statelessness: No global variables persisting between calls.
+Performance: Code must execute in $<1ms$ per call.
+
+
+9. FAQ
+Q: How are slip events counted?
+A: Each timestep where Drive Force > Traction Limit counts as one slip event.
+Q: What happens if I return a negative gear?
+A: It is clamped to 0.0 (Coasting).
+Q: Is there a penalty for finishing too fast?
+A: No direct penalty, but high speeds increase Drag ($F_{drag} \propto v^2$), usually resulting in poor Energy scores.
+Q: Can I access the full track layout?
+A: Yes, via track_info['segments']. Use this for global path planning.
+
